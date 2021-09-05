@@ -10,7 +10,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${fileDirname}",
-            "args":["新建文本文档.txt.mp4","-n"]
+            "args":["README.md","-s"]
         }
     ]
 }
