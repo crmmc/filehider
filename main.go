@@ -34,7 +34,7 @@ func main() {
 	argv := os.Args   //系统传入的命令行参数
 	argc := len(argv) //系统传入的命令行参数个数
 	if argc == 1 {
-		help(argv[1])
+		help(argv[0])
 		os.Exit(0)
 	}
 	var fileinputs []string
