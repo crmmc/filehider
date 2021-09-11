@@ -24,6 +24,7 @@ var enablerename bool          //乱序文件名格式开关
 var fileextname string = "mp4" //输出的加密文件的后缀名
 var cfilename string = "_"     //还原的文件的文件名前缀，防止源文件存在导致覆盖写入
 var buffersize int = 4096      //读入缓存空间大小
+var outputpath string = ""
 var fileheadle []byte = []byte{
 	0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32, 0x00, 0x00, 0x00, 0x00,
 	0x6D, 0x70, 0x34, 0x32, 0x6D, 0x70, 0x34, 0x31, 0x00, 0x04, 0x38, 0xDC, 0x6D, 0x6F, 0x6F, 0x76,
@@ -62,16 +63,34 @@ func main() {
 				continue
 			}
 		}
+		if len(argv[i]) > 13 {
+			if argv[i][0:13] == "--outputpath=" {
+				outputpath = argv[i][13:] //提取输出路径
+				if outputpath == "" {
+					outputpath = "./"
+				} else if outputpath[len(outputpath)-1:] != "/" {
+					if outputpath[len(outputpath)-1:] != "\\" {
+						if strings.Contains(outputpath, "\\") {
+							outputpath = outputpath + "\\"
+						} else if strings.Contains(outputpath, "/") {
+							outputpath = outputpath + "/"
+						}
+					}
+				}
+				fmt.Println("SET Output DIR: " + outputpath)
+				continue
+			}
+		}
 		fileinputs = append(fileinputs, argv[i]) //拼接字符串
 	}
 	errfs := []string{}
 	for i := 0; i < len(fileinputs); i++ {
 		ret := process(fileinputs[i])
 		if ret == 3 {
-			fmt.Println("Open Output File " + fileinputs[i] + " Failed!")
+			fmt.Println("Open Output File For " + fileinputs[i] + " Failed!")
 			errfs = append(errfs, fileinputs[i])
 		} else if ret == 2 {
-			fmt.Println("Open Input File " + fileinputs[i] + " Failed!")
+			fmt.Println("Open Input File For " + fileinputs[i] + " Failed!")
 			errfs = append(errfs, fileinputs[i])
 		} else if ret == 1 {
 			help(argv[0])
@@ -147,7 +166,11 @@ func process(inputfilename string) int {
 		inf.Read(rbn)
 		rn := bytes2str(encode(rbn)) //转换为字符串
 		rn = cfilename + rn
-		outfn = orfp + rn //组合输出文件路径
+		if outputpath == "" {
+			outfn = orfp + rn //组合输出文件路径
+		} else {
+			outfn = outputpath + rn //组合设定的文件输出路径
+		}
 		outf, oerr := os.Create(outfn)
 		if oerr != nil {
 			return (3)
@@ -180,11 +203,20 @@ func process(inputfilename string) int {
 		enablerename = false
 	} else {
 		inf.Seek(0, io.SeekStart) //是个未加密的文件，移动文件指针到文件开头
-		if enablerename {
-			fmt.Println("AutoRename Mode ON")
-			outfn = fmt.Sprintf("%x", sha1.New().Sum(str2bytes(inputfilename))) + "." + fileextname //利用sha1生成唯一的文件名
+		if outputpath == "" {
+			if enablerename {
+				fmt.Println("AutoRename Mode ON")
+				outfn = fmt.Sprintf("%x", sha1.New().Sum(str2bytes(inputfilename))) + "." + fileextname //利用sha1生成唯一的文件名
+			} else {
+				outfn = inputfilename + "." + fileextname //生成文件名
+			}
 		} else {
-			outfn = inputfilename + "." + fileextname //生成文件名
+			if enablerename {
+				fmt.Println("AutoRename Mode ON")
+				outfn = outputpath + fmt.Sprintf("%x", sha1.New().Sum(str2bytes(inputfilename))) + "." + fileextname //利用sha1生成唯一的文件名
+			} else {
+				outfn = outputpath + orfn + "." + fileextname //生成文件名
+			}
 		}
 		fmt.Println("Mode: Encode")
 		if disablesha1 {
@@ -248,7 +280,8 @@ func help(argv0 string) {
 	fmt.Println("\t\"-f\" Remove the \"_\" before the output file name")
 	fmt.Println("\t\"-s\" Turn on the auto rename switch,the output file name can cheat mechine prefectly")
 	fmt.Println("\t\"--ext=\" can reset the output file suffix (default: mp4)")
-	fmt.Println("Example:\n\t" + argv0 + " C:/pagefile.sys D:/test.zip --ext=mov -n -s ")
+	fmt.Println("\t\"--outputpath=\" can set the path for all output files (defalut:[like the input file])")
+	fmt.Println("Example:\n\t" + argv0 + " C:/pagefile.sys D:/test.zip --ext=mov --outputpath=./output/ -n -s ")
 }
 
 //二进制数据逐字节比较
