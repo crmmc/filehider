@@ -21,6 +21,7 @@ import (
 
 var disablesha1 bool           //SHA1校验开关
 var enablerename bool          //乱序文件名格式开关
+var onlytest bool              //仅测试开关
 var fileextname string = "mp4" //输出的加密文件的后缀名
 var cfilename string = "_"     //还原的文件的文件名前缀，防止源文件存在导致覆盖写入
 var buffersize int = 4096      //读入缓存空间大小
@@ -46,6 +47,10 @@ func main() {
 		}
 		if argv[i] == "-n" {
 			disablesha1 = true //-n开关被开启
+			continue
+		}
+		if argv[i] == "-t" {
+			onlytest = true //-t开关被开启
 			continue
 		}
 		if argv[i] == "-s" {
@@ -152,11 +157,6 @@ func process(inputfilename string) int {
 	if analyze(fileheadle, infheadle) {
 		//符合文件头，判断为已被加密的文件
 		fmt.Println("Mode: Decode")
-		if disablesha1 {
-			fmt.Println("SHA1 Check: Disable")
-		} else {
-			fmt.Println("SHA1 Check: Enable")
-		}
 		// 读储存的文件名变量大小
 		nbl := make([]byte, 4)
 		inf.Read(nbl)
@@ -165,15 +165,25 @@ func process(inputfilename string) int {
 		rbn := make([]byte, nl)
 		inf.Read(rbn)
 		rn := bytes2str(encode(rbn)) //转换为字符串
+		fmt.Println("FILE:" + rn)
+		if disablesha1 {
+			fmt.Println("SHA1 Check: Disable")
+		} else {
+			fmt.Println("SHA1 Check: Enable")
+		}
 		rn = cfilename + rn
 		if outputpath == "" {
 			outfn = orfp + rn //组合输出文件路径
 		} else {
 			outfn = outputpath + rn //组合设定的文件输出路径
 		}
-		outf, oerr := os.Create(outfn)
-		if oerr != nil {
-			return (3)
+		var outf *os.File
+		var oerr error
+		if !onlytest {
+			outf, oerr = os.Create(outfn)
+			if oerr != nil {
+				return (3)
+			}
 		}
 		rbshadata := make([]byte, 20) //储存从文件读到的sha1
 		inf.Read(rbshadata)           //读sha1值
@@ -187,9 +197,13 @@ func process(inputfilename string) int {
 			if !disablesha1 {
 				sha.Write(debuf) //文件内容读入sha1
 			}
-			outf.Write(debuf) //写入还原的数据到输出文件
+			if !onlytest {
+				outf.Write(debuf) //写入还原的数据到输出文件
+			}
 		}
-		outf.Close() //写入完成，关闭输出文件
+		if !onlytest {
+			outf.Close() //写入完成，关闭输出文件
+		}
 		if !disablesha1 {
 			rshadata := sha.Sum(nil) //计算sha1
 			if analyze(rshadata, rbshadata) {
@@ -201,6 +215,10 @@ func process(inputfilename string) int {
 			fmt.Println("SHA1 Check: Please check file sha1 by yourself")
 		}
 		enablerename = false
+		inf.Close()
+		if !onlytest {
+			fmt.Println("Ouput: " + outfn)
+		}
 	} else {
 		inf.Seek(0, io.SeekStart) //是个未加密的文件，移动文件指针到文件开头
 		if outputpath == "" {
@@ -264,9 +282,9 @@ func process(inputfilename string) int {
 				report.Close()
 			}
 		}
+		inf.Close()
+		fmt.Println("Ouput: " + outfn)
 	}
-	inf.Close()
-	fmt.Println("Ouput: " + outfn)
 	return 0
 }
 
@@ -281,6 +299,7 @@ func help(argv0 string) {
 	fmt.Println("\t\"-s\" Turn on the auto rename switch,the output file name can cheat mechine prefectly")
 	fmt.Println("\t\"--ext=\" can reset the output file suffix (default: mp4)")
 	fmt.Println("\t\"--outputpath=\" can set the path for all output files (defalut:[like the input file])")
+	fmt.Println("\t\"-t\" Enable the only test mode, will only test encrypted file data but not write decrypted data to new file")
 	fmt.Println("Example:\n\t" + argv0 + " C:/pagefile.sys D:/test.zip --ext=mov --outputpath=./output/ -n -s ")
 }
 
