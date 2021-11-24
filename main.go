@@ -6,31 +6,34 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
-/*
-错误返回码定义：
-正常：0
-命令行参数错误：1
-输入文件打开失败：2
-输出文件打开失败：3
-*/
-
-var disablesha1 bool           //SHA1校验开关
-var enablerename bool          //乱序文件名格式开关
-var onlytest bool              //仅测试开关
-var fileextname string = "mp4" //输出的加密文件的后缀名
-var cfilename string = "_"     //还原的文件的文件名前缀，防止源文件存在导致覆盖写入
-var buffersize int = 4096      //读入缓存空间大小
+var disablesha1 bool                       //SHA1校验开关
+var enablerename bool                      //乱序文件名格式开关
+var onlytest bool                          //仅测试开关
+var fileextname string = "mp4"             //输出的加密文件的后缀名
+var cfilename string = "_"                 //还原的文件的文件名前缀，防止源文件存在导致覆盖写入
+var buffersize int = 4096                  //读入缓存空间大小
+var globalmaxthread int = runtime.NumCPU() //线程池中任务线程的数量
 var outputpath string = ""
 var fileheadle []byte = []byte{
 	0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32, 0x00, 0x00, 0x00, 0x00,
 	0x6D, 0x70, 0x34, 0x32, 0x6D, 0x70, 0x34, 0x31, 0x00, 0x04, 0x38, 0xDC, 0x6D, 0x6F, 0x6F, 0x76,
 	0x00, 0x00, 0x00, 0x6C, 0x6D, 0x76, 0x68, 0x64, 0x00, 0x00, 0x00, 0x00, 0xDD, 0x53, 0x54, 0x50,
 	0xDD, 0x53, 0x54, 0x5C, 0x00, 0x01, 0x5F, 0x90, 0x01, 0xD5, 0x94, 0x3F, 0xDD, 0x53} //用于校验和伪装的文件头
+
+var gw = sync.WaitGroup{}               //用于进程池阻塞主函数
+var maintasklist = make(chan string, 1) //用于向子线程传递参数
+var allfailed []string                  //储存失败的文件方便报告
+var allfailedml = sync.Mutex{}          //储存失败文件的变量的互斥锁
 
 func main() {
 	argv := os.Args   //系统传入的命令行参数
@@ -40,6 +43,7 @@ func main() {
 		os.Exit(0)
 	}
 	var fileinputs []string
+	//开始检查命令行参数
 	for i := 1; i < argc; i++ {
 		if argv[i] == "-h" {
 			help(argv[0])
@@ -82,41 +86,97 @@ func main() {
 						}
 					}
 				}
-				fmt.Println("SET Output DIR: " + outputpath)
+				if info, err := os.Stat(outputpath); err != nil {
+					fmt.Println("Uncorrect folder Path" + outputpath)
+					fmt.Println("Reset Output Path to ./")
+					outputpath = "./"
+				} else if info.IsDir() {
+					fmt.Println("Reset Output DIR: " + outputpath)
+				}
 				continue
+			} else {
+				if argv[i][0:12] == "--maxthread=" {
+					var nerr error
+					globalmaxthread, nerr = strconv.Atoi(argv[i][12:]) //读取最大核心数
+					if nerr != nil {
+						globalmaxthread = runtime.NumCPU()
+					}
+					fmt.Printf("Reset MAX ThreadNum: %d\n", globalmaxthread)
+					continue
+				}
 			}
 		}
-		fileinputs = append(fileinputs, argv[i]) //拼接字符串
-	}
-	errfs := []string{}
-	for i := 0; i < len(fileinputs); i++ {
-		ret := process(fileinputs[i])
-		if ret == 3 {
-			fmt.Println("Open Output File For " + fileinputs[i] + " Failed!")
-			errfs = append(errfs, fileinputs[i])
-		} else if ret == 2 {
-			fmt.Println("Open Input File For " + fileinputs[i] + " Failed!")
-			errfs = append(errfs, fileinputs[i])
-		} else if ret == 1 {
-			help(argv[0])
-			os.Exit(1)
-		} else if ret != 0 {
-			fmt.Printf("Doing %s Got Different Return: ", fileinputs[i])
-			errfs = append(errfs, fileinputs[i])
-			fmt.Println(ret)
+		if info, err := os.Stat(argv[i]); err != nil {
+			fmt.Println("Unrecongizeable Parameter: " + argv[i])
+		} else if info.IsDir() {
+			fmt.Printf("Reading files from dir: %s\n", argv[i])
+			filelist, err := ioutil.ReadDir(argv[i])
+			if err != nil {
+				fmt.Printf("Error while reading %s: [%s]\n", argv[i], err.Error())
+			}
+			for _, f := range filelist {
+				fileinputs = append(fileinputs, filepath.Join(argv[1], "./", f.Name()))
+			}
+		} else {
+			fileinputs = append(fileinputs, argv[1])
 		}
 	}
-	if len(errfs) == 0 {
+	//检查命令行参数结束
+	//启动线程池
+	for threadid := 1; threadid < globalmaxthread; threadid++ {
+		// log.Printf("SUB Thread %d start!", threadid)
+		go subthread() //线程池内线程先启动等待任务分配
+	}
+	//启动线程池完成
+	//开始分配任务
+	for i := 0; i < len(fileinputs); i++ {
+		maintasklist <- fileinputs[i] //啊哈哈哈哈哈,鸡汤来咯(不是)
+	}
+	//分配任务完成
+	gw.Wait() //防止主进程过早退出
+	//检查是否有错误记录,有的话集中输出
+	if len(allfailed) == 0 {
 		fmt.Println("All Tasks Successful!")
 		os.Exit(0)
 	} else {
 		fmt.Println("Error Files List:")
-		for i := 0; i < len(errfs); i++ {
-			fmt.Println(errfs[i])
+		for i := 0; i < len(allfailed); i++ {
+			fmt.Println(allfailed[i])
 		}
 		fmt.Println("END")
 	}
+	// 检查错误记录结束
+	//主进程结束
 }
+
+func subthread() {
+	for {
+		fileinputs := <-maintasklist
+		gw.Add(1)
+		ret := process(fileinputs)
+		errreport := ""
+		if ret != 0 {
+			if ret == 3 {
+				errreport = "Open Output File For " + fileinputs + " Failed!"
+			} else if ret == 2 {
+				errreport = "Open Input File For " + fileinputs + " Failed!"
+			} else if ret != 0 {
+				errreport = fmt.Sprintf("Doing %s Got Different Return: %d", fileinputs, ret)
+			}
+			allfailedml.Lock()
+			allfailed = append(allfailed, errreport)
+			allfailedml.Unlock()
+		}
+		gw.Add(-1)
+	}
+}
+
+/*
+错误返回码定义：
+正常：0
+输入文件打开失败：2
+输出文件打开失败：3
+*/
 
 func process(inputfilename string) int {
 	inf, inferr := os.Open(inputfilename) //打开输入文件
@@ -182,7 +242,7 @@ func process(inputfilename string) int {
 		if !onlytest {
 			outf, oerr = os.Create(outfn)
 			if oerr != nil {
-				return (3)
+				return 3
 			}
 		}
 		rbshadata := make([]byte, 20) //储存从文件读到的sha1
@@ -292,15 +352,16 @@ func process(inputfilename string) int {
 func help(argv0 string) {
 	fmt.Println("The FileHider")
 	fmt.Println("A simple tool to hide your file")
-	fmt.Println("Usage: " + argv0 + " [Option] [File1] [File2] [File...]")
+	fmt.Println("Usage: " + argv0 + " [Option] [File1] [File2] [path1] [path2] [File...] [path...]")
 	fmt.Println("Program will automatic encode/decode files")
 	fmt.Println("Options:\n\t\"-n\" use for disable sha1 check,but it can only be used when decoding file")
 	fmt.Println("\t\"-f\" Remove the \"_\" before the output file name")
 	fmt.Println("\t\"-s\" Turn on the auto rename switch,the output file name can cheat mechine prefectly")
 	fmt.Println("\t\"--ext=\" can reset the output file suffix (default: mp4)")
 	fmt.Println("\t\"--outputpath=\" can set the path for all output files (defalut:[like the input file])")
+	fmt.Println("\t\"--maxthread=[int]\" set max threads number for filehider,default equal cpu 's cores number")
 	fmt.Println("\t\"-t\" Enable the only test mode, will only test encrypted file data but not write decrypted data to new file")
-	fmt.Println("Example:\n\t" + argv0 + " C:/pagefile.sys D:/test.zip --ext=mov --outputpath=./output/ -n -s ")
+	fmt.Println("Example:\n\t" + argv0 + " C:/pagefile.sys D:/test.zip E:/files --ext=mov --outputpath=./output/ -n -s")
 }
 
 //二进制数据逐字节比较
