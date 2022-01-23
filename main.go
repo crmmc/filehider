@@ -347,7 +347,7 @@ func process(inputfilename string) int {
 
 //帮助
 func help(argv0 string) {
-	fmt.Println("The FileHider")
+	fmt.Println("The FileHider V1.1")
 	fmt.Println("A simple tool to hide your file")
 	fmt.Println("Usage: " + argv0 + " [Option] [File1] [File2] [path1] [path2] [File...] [path...]")
 	fmt.Println("Program will automatic encode/decode files")

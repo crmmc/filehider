@@ -9,4 +9,5 @@ go build -ldflags="-w -s"
 echo "upx compressing"
 upx -9 filehider
 upx -9 filehider.exe
+filehider.exe
 pause
