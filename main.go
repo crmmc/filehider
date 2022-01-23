@@ -295,13 +295,13 @@ func process(inputfilename string) int {
 		inf.Seek(0, io.SeekStart) //是个未加密的文件，移动文件指针到文件开头
 		if outputpath == "" {
 			if enablerename {
-				outfn = fmt.Sprintf("%x", sha1.New().Sum(str2bytes(inputfilename))) + "." + fileextname //利用sha1生成唯一的文件名
+				outfn = fmt.Sprintf("%x", stringsha1(inputfilename)) + "." + fileextname //利用sha1生成唯一的文件名
 			} else {
 				outfn = inputfilename + "." + fileextname //生成文件名
 			}
 		} else {
 			if enablerename {
-				outfn = outputpath + fmt.Sprintf("%x", sha1.New().Sum(str2bytes(inputfilename))) + "." + fileextname //利用sha1生成唯一的文件名
+				outfn = outputpath + fmt.Sprintf("%x", stringsha1(inputfilename)) + "." + fileextname //利用sha1生成唯一的文件名
 			} else {
 				outfn = outputpath + orfn + "." + fileextname //生成文件名
 			}
@@ -363,7 +363,7 @@ func process(inputfilename string) int {
 
 //帮助
 func help(argv0 string) {
-	fmt.Println("The FileHider V1.1")
+	fmt.Println("The FileHider V1.2")
 	fmt.Println("A simple tool to hide your file")
 	fmt.Println("Usage: " + argv0 + " [Option] [File1] [File2] [path1] [path2] [File...] [path...]")
 	fmt.Println("Program will automatic encode/decode files")
@@ -424,4 +424,10 @@ func str2bytes(s string) []byte {
 //高效的字节组转字符串
 func bytes2str(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
+}
+
+func stringsha1(s string) string {
+	h := sha1.New()
+	h.Write([]byte(s))
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
