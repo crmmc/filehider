@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 )
 
@@ -42,7 +43,6 @@ func main() {
 		help(argv[0])
 		os.Exit(0)
 	}
-	var fileinputs []string
 	//开始检查命令行参数
 	for i := 1; i < argc; i++ {
 		if argv[i] == "-h" {
@@ -59,6 +59,7 @@ func main() {
 		}
 		if argv[i] == "-s" {
 			enablerename = true //-s开关被开启
+			//fmt.Println("-s开关被开启")
 			continue
 		}
 		if argv[i] == "-f" {
@@ -115,10 +116,10 @@ func main() {
 				fmt.Printf("Error while reading %s: [%s]\n", argv[i], err.Error())
 			}
 			for _, f := range filelist {
-				fileinputs = append(fileinputs, filepath.Join(argv[1], "./", f.Name()))
+				maintasklist <- filepath.Join(argv[i], "./", f.Name())
 			}
 		} else {
-			fileinputs = append(fileinputs, argv[1])
+			maintasklist <- argv[i]
 		}
 	}
 	//检查命令行参数结束
@@ -128,11 +129,7 @@ func main() {
 		go subthread() //线程池内线程先启动等待任务分配
 	}
 	//启动线程池完成
-	//开始分配任务
-	for i := 0; i < len(fileinputs); i++ {
-		maintasklist <- fileinputs[i] //啊哈哈哈哈哈,鸡汤来咯(不是)
-	}
-	//分配任务完成
+	time.Sleep(2000)
 	gw.Wait() //防止主进程过早退出
 	//检查是否有错误记录,有的话集中输出
 	if len(allfailed) == 0 {
