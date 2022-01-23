@@ -10,7 +10,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${fileDirname}",
-            "args":["-s","--outputpath=D:/","README.md"]
+            "args":["-s","--outputpath=D:/","README.md","filehider","filehider.exe"]
         }
     ]
 }

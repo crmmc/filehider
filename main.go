@@ -32,6 +32,9 @@ var fileheadle []byte = []byte{
 
 var gw = sync.WaitGroup{}               //用于进程池阻塞主函数
 var maintasklist = make(chan string, 1) //用于向子线程传递参数
+var tmptasklist []string                //临时储存文件队列数据的数组,重要不能删
+var allsuccess []string                 //储存成功的输出
+var allsuccesslock = sync.Mutex{}       //储存成功的输出变量的互斥锁
 var allfailed []string                  //储存失败的文件方便报告
 var allfailedml = sync.Mutex{}          //储存失败文件的变量的互斥锁
 
@@ -49,14 +52,18 @@ func main() {
 			os.Exit(0)
 		}
 		if argv[i] == "-n" {
+			fmt.Println("Sha1 Check Mode: OFF")
+			fmt.Println("SHA1 Check: Please check file sha1 by yourself")
 			disablesha1 = true //-n开关被开启
 			continue
 		}
 		if argv[i] == "-t" {
+			fmt.Println("Only Test Mode: ON")
 			onlytest = true //-t开关被开启
 			continue
 		}
 		if argv[i] == "-s" {
+			fmt.Println("Auto Rename Mode: ON")
 			enablerename = true //-s开关被开启
 			//fmt.Println("-s开关被开启")
 			continue
@@ -115,12 +122,11 @@ func main() {
 				fmt.Printf("Error while reading %s: [%s]\n", argv[i], err.Error())
 			}
 			for _, f := range filelist {
-				maintasklist <- filepath.Join(argv[i], "./", f.Name())
-				gw.Add(1)
+				tmptasklist = append(tmptasklist, filepath.Join(argv[i], "./", f.Name()))
 			}
 		} else {
-			maintasklist <- argv[i]
-			gw.Add(1)
+
+			tmptasklist = append(tmptasklist, argv[i])
 		}
 	}
 	//检查命令行参数结束
@@ -130,8 +136,19 @@ func main() {
 		go subthread() //线程池内线程先启动等待任务分配
 	}
 	//启动线程池完成
+	//开始分配任务
+	for i := 0; i < len(tmptasklist); i++ {
+		gw.Add(1)
+		maintasklist <- tmptasklist[i] //啊哈哈哈哈哈,鸡汤来咯(不是)
+	}
+	//分配任务完成
 	gw.Wait() //防止主进程过早退出
 	//检查是否有错误记录,有的话集中输出
+	close(maintasklist)
+	fmt.Println()
+	for _, onall := range allsuccess {
+		fmt.Println(onall + "\n")
+	}
 	if len(allfailed) == 0 {
 		fmt.Println("All Tasks Successful!")
 		os.Exit(0)
@@ -148,7 +165,11 @@ func main() {
 
 func subthread() {
 	for {
-		fileinputs := <-maintasklist
+		fileinputs, ok := <-maintasklist
+		if !ok {
+			//fmt.Println("maintasklist channal closed!")
+			break
+		}
 		//fmt.Println(fileinputs)
 		ret := process(fileinputs)
 		errreport := ""
@@ -166,6 +187,7 @@ func subthread() {
 		}
 		gw.Add(-1)
 	}
+	//fmt.Println("Subthread exit!")
 }
 
 /*
@@ -181,7 +203,7 @@ func process(inputfilename string) int {
 		return 2
 	}
 	var outfn string = "" //输出文件
-	fmt.Println("Input: " + inputfilename)
+	var outputstring string = "Input: " + inputfilename + "\n"
 	//分割输入文件的路径和文件名
 	var orfn, orfp string //path模块有毛病啊，为什么返回值全是空字符串啊，害的我自己写
 	if strings.Contains(inputfilename, "\\") {
@@ -213,7 +235,7 @@ func process(inputfilename string) int {
 	//分析是否符合文件头
 	if analyze(fileheadle, infheadle) {
 		//符合文件头，判断为已被加密的文件
-		fmt.Println("Mode: Decode")
+		outputstring = outputstring + "Mode: Decode" + "\n"
 		// 读储存的文件名变量大小
 		nbl := make([]byte, 4)
 		inf.Read(nbl)
@@ -222,12 +244,7 @@ func process(inputfilename string) int {
 		rbn := make([]byte, nl)
 		inf.Read(rbn)
 		rn := bytes2str(encode(rbn)) //转换为字符串
-		fmt.Println("FILE:" + rn)
-		if disablesha1 {
-			fmt.Println("SHA1 Check: Disable")
-		} else {
-			fmt.Println("SHA1 Check: Enable")
-		}
+		outputstring = outputstring + "FILE:" + rn + "\n"
 		rn = cfilename + rn
 		if outputpath == "" {
 			outfn = orfp + rn //组合输出文件路径
@@ -264,39 +281,35 @@ func process(inputfilename string) int {
 		if !disablesha1 {
 			rshadata := sha.Sum(nil) //计算sha1
 			if analyze(rshadata, rbshadata) {
-				fmt.Println("SHA1 Check: Pass")
+				outputstring = outputstring + "SHA1 Check: Pass" + "\n"
 			} else {
-				fmt.Println("SHA1 Check: File may broken")
+				outputstring = outputstring + "SHA1 Check: File may broken" + "\n"
 			}
-		} else {
-			fmt.Println("SHA1 Check: Please check file sha1 by yourself")
 		}
 		enablerename = false
 		inf.Close()
 		if !onlytest {
-			fmt.Println("Ouput: " + outfn)
+			outputstring = outputstring + "Ouput: " + outfn + "\n"
 		}
 	} else {
 		inf.Seek(0, io.SeekStart) //是个未加密的文件，移动文件指针到文件开头
 		if outputpath == "" {
 			if enablerename {
-				fmt.Println("AutoRename Mode ON")
 				outfn = fmt.Sprintf("%x", sha1.New().Sum(str2bytes(inputfilename))) + "." + fileextname //利用sha1生成唯一的文件名
 			} else {
 				outfn = inputfilename + "." + fileextname //生成文件名
 			}
 		} else {
 			if enablerename {
-				fmt.Println("AutoRename Mode ON")
 				outfn = outputpath + fmt.Sprintf("%x", sha1.New().Sum(str2bytes(inputfilename))) + "." + fileextname //利用sha1生成唯一的文件名
 			} else {
 				outfn = outputpath + orfn + "." + fileextname //生成文件名
 			}
 		}
-		fmt.Println("Mode: Encode")
+		outputstring = outputstring + "Mode: Encode" + "\n"
 		if disablesha1 {
-			fmt.Println("SHA1 Check: Enable")
-			fmt.Println("SHA1 Check: ignore \"-n\" switch")
+			outputstring = outputstring + "SHA1 Check: Enable" + "\n"
+			outputstring = outputstring + "SHA1 Check: ignore \"-n\" switch" + "\n"
 		}
 		outf, oerr := os.Create(outfn) //若文件存在则覆盖写入，不存在就创建
 		if oerr != nil {
@@ -325,7 +338,7 @@ func process(inputfilename string) int {
 		shadata := sha.Sum(nil)
 		outf.Seek(wshaseek, io.SeekStart)    //回到sha1数据的位置
 		shatext = fmt.Sprintf("%x", shadata) //sha1数据转换成字符串好展示
-		fmt.Println("SHA1 Check: " + shatext)
+		outputstring = outputstring + "SHA1 Check: " + shatext + "\n"
 		outf.Write(shadata) //写sha1值到文件
 		outf.Close()
 		//产生文件报告
@@ -335,13 +348,16 @@ func process(inputfilename string) int {
 				report.WriteString("原始文件名:" + orfnc + "\n更改后文件名:" + outfn + "\n原始文件sha1:" + shatext)
 				report.Close()
 			} else {
-				fmt.Println("Waring! Report General Failed!")
+				outputstring = outputstring + "Waring! Report General Failed!" + "\n"
 				report.Close()
 			}
 		}
 		inf.Close()
-		fmt.Println("Ouput: " + outfn)
+		outputstring = outputstring + "Ouput: " + outfn
 	}
+	allsuccesslock.Lock()
+	allsuccess = append(allsuccess, outputstring)
+	allsuccesslock.Unlock()
 	return 0
 }
 
