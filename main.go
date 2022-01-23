@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unsafe"
 )
 
@@ -117,9 +116,11 @@ func main() {
 			}
 			for _, f := range filelist {
 				maintasklist <- filepath.Join(argv[i], "./", f.Name())
+				gw.Add(1)
 			}
 		} else {
 			maintasklist <- argv[i]
+			gw.Add(1)
 		}
 	}
 	//检查命令行参数结束
@@ -129,7 +130,6 @@ func main() {
 		go subthread() //线程池内线程先启动等待任务分配
 	}
 	//启动线程池完成
-	time.Sleep(2000)
 	gw.Wait() //防止主进程过早退出
 	//检查是否有错误记录,有的话集中输出
 	if len(allfailed) == 0 {
@@ -149,7 +149,7 @@ func main() {
 func subthread() {
 	for {
 		fileinputs := <-maintasklist
-		gw.Add(1)
+		//fmt.Println(fileinputs)
 		ret := process(fileinputs)
 		errreport := ""
 		if ret != 0 {
